@@ -41,5 +41,6 @@ void FMHACutlassSM100Run(at::Tensor q, at::Tensor k, at::Tensor v, at::Tensor qo
                  total_qo_len, total_kv_len, max_qo_len, max_kv_len);
     }
   };
+  std::cout << "Executing FlashInfer FMHACutlassSM100Run!" << std::endl;
   run(Shape<_256, _128, _128>{});
 }
