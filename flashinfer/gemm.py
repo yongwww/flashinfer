@@ -861,21 +861,20 @@ def group_gemm_fp8_nt_groupwise(
         out_dtype = out_dtype or torch.bfloat16
         out = torch.empty(a.shape[0], n, dtype=out_dtype, device=a.device)
 
-    if (m_indptr % 4 == 0).all():
-        get_gemm_sm100_module().group_gemm_fp8_nt_groupwise.default(
-            int_workspace_buffer,
-            float_workspace_buffer,
-            a,
-            b,
-            a_scale,
-            b_scale,
-            out,
-            m_indptr,
-            n,
-            k,
-            *scale_granularity_mnk,
-        )
-        return out
+    get_gemm_sm100_module().group_gemm_fp8_nt_groupwise.default(
+        int_workspace_buffer,
+        float_workspace_buffer,
+        a,
+        b,
+        a_scale,
+        b_scale,
+        out,
+        m_indptr,
+        n,
+        k,
+        *scale_granularity_mnk,
+    )
+    return out
 
     m = m_indptr[1:] - m_indptr[:-1]
     m = m + 3 - (m + 3) % 4
