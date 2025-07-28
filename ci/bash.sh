@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
     elif [[ $cmd == "-j" ]]; then
         num_threads=$2
         shift 2
-        DOCKER_ENV="${DOCKER_ENV} -e NUM_THREADS=${num_threads} --cpus ${num_threads}"
+        DOCKER_ENV="${DOCKER_ENV} "
     elif [[ $cmd == "--no-gpu" ]]; then
         USE_GPU=false
         shift
@@ -37,6 +37,7 @@ while [[ $# -gt 0 ]]; do
         break
     fi
 done
+# comment
 
 if [ "$#" -eq 0 ]; then
     COMMAND="bash"
