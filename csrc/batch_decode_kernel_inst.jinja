@@ -26,12 +26,20 @@ BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}
   {% set dtype_size = 2 %}
 {% endif %}
 
-{% set vec_size_calc = 16 // dtype_size %}
-{% set vec_size_max = head_dim // 32 %}
-{% if vec_size_calc > vec_size_max %}
-  {% set vec_size = vec_size_max %}
+// vec_size = max(16 / dtype_size, head_dim / 32)
+// For sm_120, we need to ensure vec_size * dtype_size * 8 >= 128 for cp_async
+{% set vec_size_min = 16 // dtype_size %}
+{% set vec_size_from_head = head_dim // 32 %}
+{% if vec_size_min > vec_size_from_head %}
+  {% set vec_size = vec_size_min %}
 {% else %}
-  {% set vec_size = vec_size_calc %}
+  {% set vec_size = vec_size_from_head %}
+{% endif %}
+
+// Ensure cp_async constraint for sm_120: vec_bits >= 128
+{% set vec_bits = vec_size * dtype_size * 8 %}
+{% if vec_bits < 128 %}
+  {% set vec_size = 128 // (dtype_size * 8) %}
 {% endif %}
 
 {% set bdx = head_dim // vec_size %}
@@ -39,7 +47,8 @@ BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}
 // For each possible group size, instantiate the kernel
 // Group size 1
 {% set bdy = 1 %}
-{% set tile_size_per_bdx = 4 if dtype_size == 1 else 2 %}
+// tile_size_per_bdx = sizeof(DTypeKV) == 1 ? 2 : 4
+{% set tile_size_per_bdx = 2 if dtype_size == 1 else 4 %}
 {% if bdx * bdy >= 128 %}
   {% set num_threads = bdx * bdy %}
 {% else %}
