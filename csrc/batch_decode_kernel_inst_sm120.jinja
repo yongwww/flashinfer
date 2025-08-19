@@ -1,0 +1,87 @@
+#include <flashinfer/attention/decode.cuh>
+#include "batch_decode_config.inc"
+
+using namespace flashinfer;
+
+namespace flashinfer {
+
+// Instantiate the dispatcher function
+template cudaError_t
+BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}, {{ variant_name }}, Params>(
+    Params params, {{ dtype_o }}* tmp_v,
+    float* tmp_s, bool enable_pdl, cudaStream_t stream);
+
+// For sm_120 (compute capability >= 8), NUM_STAGES_SMEM = 2
+// We need to instantiate all possible kernel combinations that could be dispatched
+
+{% set head_dim = head_dim_qk %}
+{% set vec_size = [16 // dtype_kv.size, head_dim // 32] | max %}
+{% set bdx = head_dim // vec_size %}
+
+// Group size 1 kernels
+{% if bdx <= 32 %}
+  {% set bdy = 1 %}
+  {% set num_threads = [128, bdx * bdy] | max %}
+  {% set bdz = num_threads // (bdx * bdy) %}
+  {% set tile_size_per_bdx = 4 if dtype_kv.size == 1 else 2 %}
+  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, 
+    {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
+    const __grid_constant__ Params params);
+{% endif %}
+
+// Group size 2 kernels  
+{% if bdx <= 32 %}
+  {% set bdy = 2 %}
+  {% set num_threads = [128, bdx * bdy] | max %}
+  {% set bdz = num_threads // (bdx * bdy) %}
+  {% set tile_size_per_bdx = 1 %}
+  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, 
+    {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
+    const __grid_constant__ Params params);
+{% endif %}
+
+// Group size 3 kernels
+{% if bdx <= 32 %}
+  {% set bdy = 3 %}
+  {% set num_threads = [128, bdx * bdy] | max %}
+  {% set bdz = num_threads // (bdx * bdy) %}
+  {% set tile_size_per_bdx = 1 %}
+  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, 
+    {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
+    const __grid_constant__ Params params);
+{% endif %}
+
+// Group size 4 kernels
+{% if bdx <= 32 %}
+  {% set bdy = 4 %}
+  {% set num_threads = [128, bdx * bdy] | max %}
+  {% set bdz = num_threads // (bdx * bdy) %}
+  {% set tile_size_per_bdx = 1 %}
+  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, 
+    {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
+    const __grid_constant__ Params params);
+{% endif %}
+
+// Group size 8 kernels
+{% if bdx <= 32 %}
+  {% set bdy = 8 %}
+  {% set num_threads = 512 if dtype_kv.size != 1 else 256 %}
+  {% set bdz = num_threads // (bdx * bdy) %}
+  {% set tile_size_per_bdx = 1 %}
+  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, 
+    {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
+    const __grid_constant__ Params params);
+{% endif %}
+
+};
+
