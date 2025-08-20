@@ -13,26 +13,43 @@ namespace flashinfer {
 // We instantiate all combinations that might be used to avoid build failures.
 // The dispatcher logic uses:
 // - vec_size = max(16 / sizeof(DTypeKV), HEAD_DIM / 32)
-// - tile_size_per_bdx = GROUP_SIZE == 1 ? (sizeof(DTypeKV) == 1 ? 2 : 4) : 1
+// - tile_size_per_bdx = GROUP_SIZE == 1 ? 4 : 1
 
-// For head_dim=64, vec_size=4, bdx=16
+// For head_dim=64
 {% if head_dim_qk == 64 %}
-// GROUP_SIZE=1, bdy=1, num_threads=128, bdz=8
-// Both FP8 (tile_size_per_bdx=2) and FP16/BF16 (tile_size_per_bdx=4) variants
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 2U, 4U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 2U, 4U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=1, tile_size_per_bdx=4
+// vec_size=4, bdx=16 variant
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 4U, 4U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 4U, 4U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
+// vec_size=8, bdx=8 variant  
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 4U, 8U, 8U, 1U, 16U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 4U, 8U, 8U, 1U, 16U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=4 variant (for FP8)
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 4U, 16U, 4U, 1U, 32U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 4U, 16U, 4U, 1U, 32U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=2, bdy=2, num_threads=128, bdz=4, tile_size_per_bdx=1
+// GROUP_SIZE=2, bdy=2, tile_size_per_bdx=1
+// vec_size=4, bdx=16, bdz=4
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 4U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 4U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
+// vec_size=8, bdx=8, bdz=8
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 8U, 8U, 2U, 8U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 8U, 8U, 2U, 8U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=4, bdz=16
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 4U, 2U, 16U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 4U, 2U, 16U, {{ variant_name }}, Params>(Params params);
 
 // GROUP_SIZE=3, bdy=3, special case
 // For 64: bdx=16, bdz=floor(128/(16*3))=2, but actually we see bdz=2 or 3
@@ -59,93 +76,128 @@ template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 4U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
 {% endif %}
 
-// For head_dim=128, vec_size=8, bdx=16
+// For head_dim=128
 {% if head_dim_qk == 128 %}
-// GROUP_SIZE=1, bdy=1, num_threads=128, bdz=8
-// Both FP8 (tile_size_per_bdx=2) and FP16/BF16 (tile_size_per_bdx=4) variants
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 2U, 8U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 2U, 8U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=1, tile_size_per_bdx=4
+// vec_size=8, bdx=16 variant
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 4U, 8U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 4U, 8U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=8 variant (for FP8)
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 4U, 16U, 8U, 1U, 16U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 4U, 16U, 8U, 1U, 16U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=2, bdy=2, num_threads=128, bdz=4, tile_size_per_bdx=1
+// GROUP_SIZE=2, bdy=2, tile_size_per_bdx=1
+// vec_size=8, bdx=16, bdz=4
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=8, bdz=8
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 8U, 2U, 8U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 8U, 2U, 8U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=3, bdy=3, bdz=2 for head_dim=128
+// GROUP_SIZE=3, bdy=3, tile_size_per_bdx=1
+// vec_size=8, bdx=16, bdz=2 (96 threads < 128)
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 16U, 3U, 2U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 16U, 3U, 2U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=8, bdz=5 (120 threads < 128)
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 8U, 3U, 5U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 8U, 3U, 5U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=4, bdy=4, num_threads=128, bdz=2, tile_size_per_bdx=1
+// GROUP_SIZE=4, bdy=4, tile_size_per_bdx=1
+// vec_size=8, bdx=16, bdz=2
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 16U, 4U, 2U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 16U, 4U, 2U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=8, bdz=4
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 8U, 4U, 4U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 8U, 4U, 4U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=8, bdy=8, num_threads=128, bdz=1, tile_size_per_bdx=1
+// GROUP_SIZE=8, bdy=8, tile_size_per_bdx=1
+// vec_size=8, bdx=16, bdz=1
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=8, bdz=2
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 8U, 8U, 2U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 8U, 8U, 2U, {{ variant_name }}, Params>(Params params);
 {% endif %}
 
 // For head_dim=256 
 {% if head_dim_qk == 256 %}
-// vec_size = max(16 / sizeof(DTypeKV), HEAD_DIM / 32) = max(16/sizeof(DTypeKV), 8)
-// For FP8: vec_size = max(16, 8) = 16, bdx = 256/16 = 16
-// For FP16/BF16: vec_size = max(8, 8) = 8, bdx = 256/8 = 32
+// GROUP_SIZE=1, tile_size_per_bdx=4
+// vec_size=8, bdx=32 variant
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 4U, 8U, 32U, 1U, 4U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 4U, 8U, 32U, 1U, 4U, {{ variant_name }}, Params>(Params params);
+// vec_size=16, bdx=16 variant (for FP8)
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 4U, 16U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 4U, 16U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
 
-// FP8 variants: vec_size=16, bdx=16
-// GROUP_SIZE=1, tile_size_per_bdx=2
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 2U, 16U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 2U, 16U, 16U, 1U, 8U, {{ variant_name }}, Params>(Params params);
 // GROUP_SIZE>1, tile_size_per_bdx=1
+// GROUP_SIZE=2, vec_size=8, bdx=32, bdy=2, bdz=2
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 8U, 32U, 2U, 2U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 8U, 32U, 2U, 2U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=2, vec_size=16, bdx=16, bdy=2, bdz=4
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 16U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 16U, 16U, 2U, 4U, {{ variant_name }}, Params>(Params params);
 
-// FP16/BF16 variants: vec_size=8, bdx=32
-// GROUP_SIZE=1, tile_size_per_bdx=4, bdy=1, bdz=4
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 4U, 8U, 32U, 1U, 4U, {{ variant_name }}, Params>(Params params);
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 4U, 8U, 32U, 1U, 4U, {{ variant_name }}, Params>(Params params);
-
-// GROUP_SIZE=2, tile_size_per_bdx=1, bdy=2, bdz=2
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 1U, 8U, 32U, 2U, 2U, {{ variant_name }}, Params>(Params params);
-template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 1U, 8U, 32U, 2U, 2U, {{ variant_name }}, Params>(Params params);
-
-// GROUP_SIZE=3, tile_size_per_bdx=1, bdy=3, bdz=1 (96 threads, not 128)
+// GROUP_SIZE=3, vec_size=8, bdx=32, bdy=3, bdz=1
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 32U, 3U, 1U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 32U, 3U, 1U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=3, vec_size=16, bdx=16, bdy=3, bdz=2
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 16U, 3U, 2U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 16U, 3U, 2U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=4, tile_size_per_bdx=1, bdy=4, bdz=1 (128 threads)
+// GROUP_SIZE=4, vec_size=8, bdx=32, bdy=4, bdz=1
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 1U, 1U, 8U, 32U, 4U, 1U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
     {{ pos_encoding_mode }}, 2U, 1U, 8U, 32U, 4U, 1U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=4, vec_size=16, bdx=16, bdy=4, bdz=2
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 16U, 4U, 2U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 16U, 4U, 2U, {{ variant_name }}, Params>(Params params);
 
-// GROUP_SIZE=8, tile_size_per_bdx=1, bdy=8, bdz=1 (256 threads, exceeds limit but appears in errors)
-// Actually, bdx might be different for this case, but let's add what the error shows
+// GROUP_SIZE=8, vec_size=8, bdx=32, bdy=8 would exceed thread limit
+// Use smaller bdx: vec_size=8, bdx=16, bdy=8, bdz=1
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 1U, 1U, 8U, 32U, 8U, 1U, {{ variant_name }}, Params>(Params params);
+    {{ pos_encoding_mode }}, 1U, 1U, 8U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
 template __global__ void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, 2U, 1U, 8U, 32U, 8U, 1U, {{ variant_name }}, Params>(Params params);
+    {{ pos_encoding_mode }}, 2U, 1U, 8U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
+// GROUP_SIZE=8, vec_size=16, bdx=16, bdy=8, bdz=1
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 1U, 1U, 16U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
+template __global__ void BatchDecodeWithPagedKVCacheKernel<
+    {{ pos_encoding_mode }}, 2U, 1U, 16U, 16U, 8U, 1U, {{ variant_name }}, Params>(Params params);
 {% endif %}
 
 // Instantiate the main dispatcher function
@@ -154,4 +206,6 @@ BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}
     Params params, {{ dtype_o }}* tmp_v,
     float* tmp_s, bool enable_pdl, cudaStream_t stream);
 
+}  // namespace flashinfer
+}  // namespace flashinfer
 }  // namespace flashinfer
