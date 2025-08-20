@@ -39,9 +39,9 @@ template <typename KTraits_P, typename KTraits_D, bool PartitionKV_P, typename P
 __global__ __launch_bounds__(std::max(
     KTraits_P::NUM_THREADS,
     KTraits_D::NUM_THREADS)) void PODWithKVCacheTensorKernel(const uint32_t xsize,
-                                                             const __grid_constant__ PrefillParams
+                                                             const PrefillParams
                                                                  prefill_params,
-                                                             const __grid_constant__ DecodeParams
+                                                             const DecodeParams
                                                                  decode_params,
                                                              int* tbAssign) {
   extern __shared__ uint8_t smem[];
