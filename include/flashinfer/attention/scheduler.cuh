@@ -36,7 +36,11 @@ namespace flashinfer {
 template <PosEncodingMode POS_ENCODING_MODE, uint32_t num_stages_smem, uint32_t tile_size_per_bdx,
           uint32_t vec_size, uint32_t bdx, uint32_t bdy, uint32_t bdz, typename AttentionVariant,
           typename Params>
+#ifdef FLASHINFER_USE_GRID_CONSTANT
 __global__ void BatchDecodeWithPagedKVCacheKernel(const __grid_constant__ Params params);
+#else
+__global__ void BatchDecodeWithPagedKVCacheKernel(const Params params);
+#endif
 
 template <uint32_t num_stages_smem, uint32_t vec_size_ckv, uint32_t vec_size_kpe, uint32_t bdx,
           uint32_t bdy, uint32_t bdz, uint32_t tile_size_qo_heads, typename AttentionVariant,
@@ -177,7 +181,15 @@ inline cudaError_t BatchDecodeWithPagedKVCacheWorkEstimationDispatched(
     int dev_id = 0;
     FLASHINFER_CUDA_CALL(cudaGetDevice(&dev_id));
     FLASHINFER_CUDA_CALL(cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, dev_id));
-    FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
+    int device_id;
+    cudaGetDevice(&device_id);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device_id);
+    if (prop.major >= 12) {
+      // For sm_120+, use conservative defaults due to __grid_constant__ issues
+      num_blocks_per_sm = 2;  // Conservative default for Blackwell
+    } else {
+      FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
                                                                        num_threads, smem_size));
     max_grid_size = num_blocks_per_sm * num_sm;
     if (batch_size * gdy >= max_grid_size) {
@@ -243,7 +255,15 @@ inline cudaError_t BatchDecodeWithPagedKVCacheWorkEstimationDispatchedMLA(
     int dev_id = 0;
     FLASHINFER_CUDA_CALL(cudaGetDevice(&dev_id));
     FLASHINFER_CUDA_CALL(cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, dev_id));
-    FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
+    int device_id;
+    cudaGetDevice(&device_id);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device_id);
+    if (prop.major >= 12) {
+      // For sm_120+, use conservative defaults due to __grid_constant__ issues
+      num_blocks_per_sm = 2;  // Conservative default for Blackwell
+    } else {
+      FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
                                                                        num_threads, smem_size));
     max_grid_size = num_blocks_per_sm * num_sm;
     if (batch_size * gdy >= max_grid_size) {
@@ -299,7 +319,15 @@ inline cudaError_t BatchDecodeWithPagedKVCacheWorkEstimationDispatchedMlaCuteSM8
   FLASHINFER_CUDA_CALL(cudaGetDevice(&dev_id));
   FLASHINFER_CUDA_CALL(cudaDeviceGetAttribute(&num_sm, cudaDevAttrMultiProcessorCount, dev_id));
 
-  // FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
+  // int device_id;
+    cudaGetDevice(&device_id);
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, device_id);
+    if (prop.major >= 12) {
+      // For sm_120+, use conservative defaults due to __grid_constant__ issues
+      num_blocks_per_sm = 2;  // Conservative default for Blackwell
+    } else {
+      FLASHINFER_CUDA_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&num_blocks_per_sm, kernel,
   //                                   num_threads, smem_size));
   // fixme: num_blocks_per_sm is 0 derived from cudaOccupancyMaxActiveBlocksPerMultiprocessor at
   // times, and we fill smem with q-heads as many as possible, so num_blocks_per_sm should be 1

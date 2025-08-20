@@ -214,7 +214,11 @@ __device__ __forceinline__ void sync_state(AttentionVariant variant, state_t<vec
 template <PosEncodingMode pos_encoding_mode, uint32_t num_stages_smem, uint32_t tile_size_per_bdx,
           uint32_t vec_size, uint32_t bdx, uint32_t bdy, uint32_t bdz, typename AttentionVariant,
           typename Params>
+#ifdef FLASHINFER_USE_GRID_CONSTANT
 __global__ void SingleDecodeWithKVCacheKernel(const __grid_constant__ Params params) {
+#else
+__global__ void SingleDecodeWithKVCacheKernel(const Params params) {
+#endif
   using DTypeQ = typename Params::DTypeQ;
   using DTypeKV = typename Params::DTypeKV;
   using DTypeO = typename Params::DTypeO;
@@ -606,7 +610,11 @@ __device__ __inline__ void BatchDecodeWithPagedKVCacheDevice(const Params& param
 template <PosEncodingMode POS_ENCODING_MODE, uint32_t num_stages_smem, uint32_t tile_size_per_bdx,
           uint32_t vec_size, uint32_t bdx, uint32_t bdy, uint32_t bdz, typename AttentionVariant,
           typename Params>
+#ifdef FLASHINFER_USE_GRID_CONSTANT
 __global__ void BatchDecodeWithPagedKVCacheKernel(const __grid_constant__ Params params) {
+#else
+__global__ void BatchDecodeWithPagedKVCacheKernel(const Params params) {
+#endif
   extern __shared__ uint8_t smem[];
   BatchDecodeWithPagedKVCacheDevice<POS_ENCODING_MODE, num_stages_smem, tile_size_per_bdx, vec_size,
                                     bdx, bdy, bdz, AttentionVariant>(params, smem);

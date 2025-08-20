@@ -6,43 +6,6 @@ using namespace flashinfer;
 
 namespace flashinfer {
 
-// Calculate kernel parameters
-{% set head_dim = head_dim_qk %}
-{% if dtype_kv == "half" or dtype_kv == "__nv_bfloat16" %}
-  {% set dtype_size = 2 %}
-{% elif dtype_kv == "__nv_fp8_e4m3" or dtype_kv == "__nv_fp8_e5m2" %}
-  {% set dtype_size = 1 %}
-{% else %}
-  {% set dtype_size = 2 %}
-{% endif %}
-{% set vec_size = [16 // dtype_size, head_dim // 32] | max %}
-{% set bdx = head_dim // vec_size %}
-
-// Explicitly define kernel specializations for sm_120
-// This ensures the kernels exist as symbols for the WorkEstimation functions
-{% for group_size in [1, 2, 3, 4, 8] %}
-{% set bdy = group_size %}
-{% set num_threads = [128, bdx * bdy] | max %}
-{% set bdz = num_threads // (bdx * bdy) %}
-{% set tile_size_per_bdx = 1 if group_size > 1 else (4 if dtype_size == 2 else 2) %}
-
-// Group size {{ group_size }} - NUM_STAGES_SMEM = 1
-template<>
-__global__ void BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
-    const __grid_constant__ Params params) {
-  extern __shared__ uint8_t smem[];
-  BatchDecodeWithPagedKVCacheDevice<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}>(params, smem);
-}
-
-// Group size {{ group_size }} - NUM_STAGES_SMEM = 2
-template<>
-__global__ void BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>(
-    const __grid_constant__ Params params) {
-  extern __shared__ uint8_t smem[];
-  BatchDecodeWithPagedKVCacheDevice<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}>(params, smem);
-}
-{% endfor %}
-
 // Instantiate the main dispatcher function
 template cudaError_t
 BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}, {{ variant_name }}, Params>(
