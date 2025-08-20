@@ -1,41 +1,96 @@
 #include <flashinfer/attention/decode.cuh>
+#include <flashinfer/attention/scheduler.cuh>
 #include "batch_decode_config.inc"
 
 using namespace flashinfer;
 
 namespace flashinfer {
 
-// Instantiate the main dispatcher function
+// Instantiate the dispatcher function
 template cudaError_t
 BatchDecodeWithPagedKVCacheDispatched<{{ head_dim_qk }}, {{ pos_encoding_mode }}, {{ variant_name }}, Params>(
     Params params, {{ dtype_o }}* tmp_v,
     float* tmp_s, bool enable_pdl, cudaStream_t stream);
 
-// Force instantiation of required kernels to satisfy linker
-// Calculate kernel parameters like in the dispatch logic
-{% set head_dim = head_dim_qk %}
-{% if dtype_kv == "half" or dtype_kv == "__nv_bfloat16" %}
-  {% set dtype_size = 2 %}
-{% elif dtype_kv == "__nv_fp8_e4m3" or dtype_kv == "__nv_fp8_e5m2" %}
-  {% set dtype_size = 1 %}
-{% else %}
-  {% set dtype_size = 2 %}
-{% endif %}
-{% set vec_size = [16 // dtype_size, head_dim // 32] | max %}
-{% set bdx = head_dim // vec_size %}
+// Force kernel instantiation by taking their addresses
+// This is needed for sm_120 where __grid_constant__ prevents explicit instantiation
+template<typename T>
+__device__ __host__ void force_kernel_instantiation() {
+  // Calculate kernel parameters like in the dispatch logic
+  {% set head_dim = head_dim_qk %}
+  {% if dtype_kv == "half" or dtype_kv == "__nv_bfloat16" %}
+    {% set dtype_size = 2 %}
+  {% elif dtype_kv == "__nv_fp8_e4m3" or dtype_kv == "__nv_fp8_e5m2" %}
+    {% set dtype_size = 1 %}
+  {% else %}
+    {% set dtype_size = 2 %}
+  {% endif %}
+  {% set vec_size = [16 // dtype_size, head_dim // 32] | max %}
+  {% set bdx = head_dim // vec_size %}
 
-// Instantiate kernels for different group sizes and NUM_STAGES_SMEM values
-{% for num_stages in [1, 2] %}
-  {% for group_size in [1, 2, 3, 4, 8] %}
-    {% set bdy = group_size %}
-    {% set tile_size_per_bdx = 1 if group_size > 1 else (2 if dtype_size == 1 else 4) %}
+  // These are never executed, just force the compiler to instantiate the kernels
+  void* kernel_ptrs[] = {
+    // Group size 1 kernels
+    {% set bdy = 1 %}
     {% set num_threads = [128, bdx * bdy] | max %}
     {% set bdz = num_threads // (bdx * bdy) %}
-template void BatchDecodeWithPagedKVCacheKernel<
-    {{ pos_encoding_mode }}, {{ num_stages }}u, {{ tile_size_per_bdx }}u,
-    {{ vec_size }}u, {{ bdx }}u, {{ bdy }}u, {{ bdz }}u,
-    {{ variant_name }}, Params>(Params __grid_constant__ params);
-  {% endfor %}
+    {% set tile_size_per_bdx = 4 if dtype_size == 2 else 2 %}
+    // NUM_STAGES_SMEM = 1
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    // NUM_STAGES_SMEM = 2
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    
+    // Group size 2 kernels
+    {% set bdy = 2 %}
+    {% set bdz = num_threads // (bdx * bdy) %}
+    {% set tile_size_per_bdx = 1 %}
+    // NUM_STAGES_SMEM = 1
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    // NUM_STAGES_SMEM = 2
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    
+    // Group size 3 kernels
+    {% set bdy = 3 %}
+    {% set bdz = num_threads // (bdx * bdy) %}
+    // NUM_STAGES_SMEM = 1
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    // NUM_STAGES_SMEM = 2
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    
+    // Group size 4 kernels
+    {% set bdy = 4 %}
+    {% set bdz = num_threads // (bdx * bdy) %}
+    // NUM_STAGES_SMEM = 1
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    // NUM_STAGES_SMEM = 2
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    
+    // Group size 8 kernels
+    {% set bdy = 8 %}
+    {% set bdz = num_threads // (bdx * bdy) %}
+    // NUM_STAGES_SMEM = 1
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 1U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+    // NUM_STAGES_SMEM = 2
+    (void*)BatchDecodeWithPagedKVCacheKernel<{{ pos_encoding_mode }}, 2U, {{ tile_size_per_bdx }}U, {{ vec_size }}U, {{ bdx }}U, {{ bdy }}U, {{ bdz }}U, {{ variant_name }}, Params>,
+  };
+  
+  // Prevent compiler from optimizing away
+  volatile void* dummy = kernel_ptrs[0];
+  (void)dummy;
+}
+
+// Instantiate the force function to trigger kernel instantiation
+template void force_kernel_instantiation<int>();
+
+// Also instantiate WorkEstimation functions
+{% for group_size in [1, 2, 3, 4, 8] %}
+template cudaError_t BatchDecodeWithPagedKVCacheWorkEstimationDispatched<
+    {{ group_size }}U, {{ head_dim_qk }}, {{ pos_encoding_mode }}, {{ variant_name }}, Params>(
+    bool& split_kv, uint32_t& max_grid_size, uint32_t& max_num_pages_per_batch,
+    uint32_t& new_batch_size, uint32_t& gdy,
+    uint32_t batch_size, typename Params::IdType* kv_indptr_h,
+    const uint32_t num_qo_heads, const uint32_t page_size,
+    bool enable_cuda_graph, cudaStream_t stream);
 {% endfor %}
 
 }  // namespace flashinfer
