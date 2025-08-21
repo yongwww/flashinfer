@@ -68,4 +68,5 @@ def test_mm_fp4(m, n, k, res_dtype, backend, use_128x4_sf_layout, auto_tuning):
 
 
 if __name__ == "__main__":
-    pytest.main([__file__])
+    # pytest.main([__file__])
+    test_mm_fp4(1, 128, 128, torch.bfloat16, "trtllm", False, False)

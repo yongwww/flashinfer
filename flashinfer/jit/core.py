@@ -67,7 +67,10 @@ common_nvcc_flags = [
 ]
 sm90a_nvcc_flags = ["-gencode=arch=compute_90a,code=sm_90a"] + common_nvcc_flags
 sm100a_nvcc_flags = ["-gencode=arch=compute_100a,code=sm_100a"] + common_nvcc_flags
-
+sm103a_nvcc_flags = ["-gencode=arch=compute_103a,code=sm_103a"] + common_nvcc_flags
+sm110_nvcc_flags = ["-gencode=arch=compute_110,code=sm_110"] + common_nvcc_flags
+sm120_nvcc_flags = ["-gencode=arch=compute_120,code=sm_120"] + common_nvcc_flags
+sm121_nvcc_flags = ["-gencode=arch=compute_121,code=sm_121"] + common_nvcc_flags
 
 @dataclasses.dataclass
 class JitSpec:

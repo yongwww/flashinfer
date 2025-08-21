@@ -659,7 +659,7 @@ def get_shuffle_matrix_a_row_indices(
     # row_indices[new_row] = old_row
     # so row_indices is an array of size M telling us from which old_row
     # the new_row should be taken.
-    row_indices = torch.empty(M, dtype=torch.long)
+    row_indices = torch.empty(M, dtype=torch.long, device=input_tensor.device)
 
     for old_row in range(M):
         block_idx = old_row // shuffle_block_size

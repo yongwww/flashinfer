@@ -396,7 +396,16 @@ def shuffle_matrix_a(input_tensor: torch.Tensor, epilogue_tile_m: int) -> torch.
     """
     row_indices = get_shuffle_matrix_a_row_indices(input_tensor, epilogue_tile_m)
 
-    return input_tensor[row_indices.to(input_tensor.device)]
+    try:
+        # Try direct CUDA indexing first
+        return input_tensor[row_indices]
+    except (torch.cuda.CudaError, torch.AcceleratorError):
+        # Fallback to CPU-based indexing if CUDA kernel is not available
+        device = input_tensor.device
+        cpu_tensor = input_tensor.cpu()
+        cpu_indices = row_indices.cpu()
+        result = cpu_tensor[cpu_indices]
+        return result.to(device)
 
 
 def shuffle_matrix_sf_a(
@@ -417,7 +426,15 @@ def shuffle_matrix_sf_a(
 
     row_indices = get_shuffle_matrix_sf_a_row_indices(input_tensor, epilogue_tile_m)
 
-    w_shuffled = input_tensor[row_indices.to(input_tensor.device)]
+    try:
+        # Try direct CUDA indexing first
+        w_shuffled = input_tensor[row_indices]
+    except (torch.cuda.CudaError, torch.AcceleratorError):
+        # Fallback to CPU-based indexing if CUDA kernel is not available
+        device = input_tensor.device
+        cpu_tensor = input_tensor.cpu()
+        cpu_indices = row_indices.cpu()
+        w_shuffled = cpu_tensor[cpu_indices].to(device)
 
     # 128x4
     return block_scale_interleave(w_shuffled)
