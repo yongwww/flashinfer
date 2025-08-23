@@ -99,11 +99,3 @@ jobs:
           twine check dist/*
           echo "✓ Package validation passed"
 
-      - name: Upload to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          echo "Uploading to PyPI..."
-          twine upload --verbose --non-interactive dist/*.tar.gz
-          echo "✓ Successfully uploaded to PyPI"
