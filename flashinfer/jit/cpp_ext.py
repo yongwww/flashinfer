@@ -6,7 +6,6 @@ import re
 import subprocess
 import sys
 import sysconfig
-from packaging.version import Version
 from pathlib import Path
 from typing import List, Optional
 
@@ -23,7 +22,9 @@ from . import env as jit_env
 
 
 @functools.cache
-def _get_cuda_version() -> Version:
+def _get_cuda_version():
+    from packaging.version import Version
+
     if CUDA_HOME is None:
         nvcc = "nvcc"
     else:
@@ -57,6 +58,8 @@ def generate_ninja_build_for_op(
     extra_include_dirs: Optional[List[Path]],
     needs_device_linking: bool = False,
 ) -> str:
+    from packaging.version import Version
+
     system_includes = [
         sysconfig.get_path("include"),
         "$torch_home/include",
