@@ -15,7 +15,12 @@ limitations under the License.
 """
 
 import functools
+import json
+import os
+import threading
+from datetime import datetime
 from enum import IntEnum
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -1686,6 +1691,96 @@ def trtllm_fp8_per_tensor_scale_moe(
     )
 
 
+# Global state for dumping
+_dump_counter = 0
+_dump_lock = threading.Lock()
+_dump_started = False  # Track if we've started dumping (for one-time message)
+
+def _dump_moe_inputs(
+    routing_logits: torch.Tensor,
+    routing_bias: Optional[torch.Tensor],
+    hidden_states: torch.Tensor,
+    hidden_states_scale: torch.Tensor,
+    gemm1_weights: torch.Tensor,
+    gemm1_weights_scale: torch.Tensor,
+    gemm2_weights: torch.Tensor,
+    gemm2_weights_scale: torch.Tensor,
+    num_experts: int,
+    top_k: int,
+    n_group: int,
+    topk_group: int,
+    intermediate_size: int,
+    local_expert_offset: int,
+    local_num_experts: int,
+    routed_scaling_factor: float,
+    tile_tokens_dim: int,
+    routing_method_type: int,
+    use_shuffled_weight: bool,
+    weight_layout: int,
+    enable_pdl: Optional[bool],
+):
+    """Helper function to dump MOE inputs to disk."""
+    global _dump_counter, _dump_started
+    
+    # Get dump configuration (check these dynamically for flexibility)
+    dump_dir = Path(os.environ.get("MOE_DUMP_DIR", "./dumps"))
+    max_dumps = int(os.environ.get("MOE_MAX_DUMPS", "100"))
+    
+    with _dump_lock:
+        # Print message when dumping starts for the first time
+        if not _dump_started:
+            _dump_started = True
+            print(f"[MOE Dump] Started dumping. Will save up to {max_dumps} dumps to {dump_dir}")
+        
+        # Check if we've reached the dump limit
+        if _dump_counter >= max_dumps:
+            if _dump_counter == max_dumps:  # Print message only once when limit is reached
+                print(f"[MOE Dump] Reached maximum of {max_dumps} dumps. No more dumps will be saved.")
+            return
+        
+        # Use the current counter value for this dump
+        request_id = f"{_dump_counter:03d}"
+        request_dir = dump_dir / f"request_{request_id}"
+        
+        # Create the directory (will overwrite if it exists from a previous run)
+        request_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save scalar parameters
+        scalar_data = {
+            "request_id": request_id,
+            "timestamp": datetime.now().isoformat(),
+            "num_experts": num_experts,
+            "top_k": top_k,
+            "n_group": n_group,
+            "topk_group": topk_group,
+            "intermediate_size": intermediate_size,
+            "local_expert_offset": local_expert_offset,
+            "local_num_experts": local_num_experts,
+            "routed_scaling_factor": routed_scaling_factor,
+            "tile_tokens_dim": tile_tokens_dim,
+            "routing_method_type": routing_method_type,
+            "use_shuffled_weight": use_shuffled_weight,
+            "weight_layout": weight_layout,
+            "enable_pdl": enable_pdl,
+        }
+        
+        with open(request_dir / "scalar.json", "w") as f:
+            json.dump(scalar_data, f, indent=2)
+        
+        # Save tensor data
+        torch.save(routing_logits, request_dir / "routing_logits.pt")
+        if routing_bias is not None:
+            torch.save(routing_bias, request_dir / "routing_bias.pt")
+        torch.save(hidden_states, request_dir / "hidden_states.pt")
+        torch.save(hidden_states_scale, request_dir / "hidden_states_scale.pt")
+        torch.save(gemm1_weights, request_dir / "gemm1_weights.pt")
+        torch.save(gemm1_weights_scale, request_dir / "gemm1_weights_scale.pt")
+        torch.save(gemm2_weights, request_dir / "gemm2_weights.pt")
+        torch.save(gemm2_weights_scale, request_dir / "gemm2_weights_scale.pt")
+        
+        _dump_counter += 1
+        print(f"[MOE Dump] Saved request {request_id} to {request_dir}")
+
 def trtllm_fp8_block_scale_moe(
     routing_logits: torch.Tensor,
     routing_bias: Optional[torch.Tensor],
@@ -1734,6 +1829,32 @@ def trtllm_fp8_block_scale_moe(
     Returns:
         torch.Tensor: Output tensor of shape [seq_len, hidden_size]
     """
+    # Dump inputs if enabled (check dynamically on each call)
+    if os.environ.get("DUMP_MOE_INPUTS", "0") == "1":
+        _dump_moe_inputs(
+            routing_logits=routing_logits,
+            routing_bias=routing_bias,
+            hidden_states=hidden_states,
+            hidden_states_scale=hidden_states_scale,
+            gemm1_weights=gemm1_weights,
+            gemm1_weights_scale=gemm1_weights_scale,
+            gemm2_weights=gemm2_weights,
+            gemm2_weights_scale=gemm2_weights_scale,
+            num_experts=num_experts,
+            top_k=top_k,
+            n_group=n_group,
+            topk_group=topk_group,
+            intermediate_size=intermediate_size,
+            local_expert_offset=local_expert_offset,
+            local_num_experts=local_num_experts,
+            routed_scaling_factor=routed_scaling_factor,
+            tile_tokens_dim=tile_tokens_dim,
+            routing_method_type=routing_method_type,
+            use_shuffled_weight=use_shuffled_weight,
+            weight_layout=weight_layout,
+            enable_pdl=enable_pdl,
+        )
+    
     return get_trtllm_moe_sm100_module().trtllm_fp8_block_scale_moe(
         routing_logits,
         routing_bias,
