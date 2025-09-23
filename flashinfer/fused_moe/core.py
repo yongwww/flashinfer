@@ -400,7 +400,7 @@ def gen_cutlass_fused_moe_module(
 
 @functools.cache
 def get_cutlass_fused_moe_module(backend: str = "100", use_fast_build: bool = False):
-    if backend in ("100", "103", "110", "121", "122"):
+    if backend in ("100", "103", "110", "120", "121"):
         FusedMoeRunner = gen_cutlass_fused_moe_sm100_module(
             use_fast_build
         ).build_and_load(class_name="FusedMoeRunner")
@@ -1830,7 +1830,16 @@ def trtllm_fp8_block_scale_moe(
         torch.Tensor: Output tensor of shape [seq_len, hidden_size]
     """
     # Dump inputs if enabled (check dynamically on each call)
-    if os.environ.get("DUMP_MOE_INPUTS", "0") == "1":
+    # First check environment variable (can be changed within process)
+    dump_enabled = os.environ.get("DUMP_MOE_INPUTS", "0") == "1"
+    
+    # Also check for a control file (can be created/removed externally)
+    if not dump_enabled:
+        from pathlib import Path
+        control_file = Path(os.environ.get("MOE_DUMP_CONTROL_FILE", "/tmp/moe_dump_enabled"))
+        dump_enabled = control_file.exists()
+    
+    if dump_enabled:
         _dump_moe_inputs(
             routing_logits=routing_logits,
             routing_bias=routing_bias,
