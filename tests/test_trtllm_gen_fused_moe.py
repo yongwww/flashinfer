@@ -2108,16 +2108,16 @@ def test_moe_quantization_classes(
         with open(request_dir / "scalar.json", "r") as f:
             dumped_scalars = json.load(f)
         
-        # Load tensors
-        expert_logits = torch.load(request_dir / "routing_logits.pt", map_location="cuda")
+        # Load tensors (weights_only=False needed for FP8 types)
+        expert_logits = torch.load(request_dir / "routing_logits.pt", map_location="cuda", weights_only=False)
         routing_bias_path = request_dir / "routing_bias.pt"
-        routing_bias = torch.load(routing_bias_path, map_location="cuda") if routing_bias_path.exists() else None
-        hidden_states_fp8 = torch.load(request_dir / "hidden_states.pt", map_location="cuda")
-        hidden_states_scale = torch.load(request_dir / "hidden_states_scale.pt", map_location="cuda")
-        gemm1_weights_fp8 = torch.load(request_dir / "gemm1_weights.pt", map_location="cuda")
-        gemm1_weights_scale = torch.load(request_dir / "gemm1_weights_scale.pt", map_location="cuda")
-        gemm2_weights_fp8 = torch.load(request_dir / "gemm2_weights.pt", map_location="cuda")
-        gemm2_weights_scale = torch.load(request_dir / "gemm2_weights_scale.pt", map_location="cuda")
+        routing_bias = torch.load(routing_bias_path, map_location="cuda", weights_only=False) if routing_bias_path.exists() else None
+        hidden_states_fp8 = torch.load(request_dir / "hidden_states.pt", map_location="cuda", weights_only=False)
+        hidden_states_scale = torch.load(request_dir / "hidden_states_scale.pt", map_location="cuda", weights_only=False)
+        gemm1_weights_fp8 = torch.load(request_dir / "gemm1_weights.pt", map_location="cuda", weights_only=False)
+        gemm1_weights_scale = torch.load(request_dir / "gemm1_weights_scale.pt", map_location="cuda", weights_only=False)
+        gemm2_weights_fp8 = torch.load(request_dir / "gemm2_weights.pt", map_location="cuda", weights_only=False)
+        gemm2_weights_scale = torch.load(request_dir / "gemm2_weights_scale.pt", map_location="cuda", weights_only=False)
         
         # Update dimensions and configs from dumped data
         num_tokens = expert_logits.shape[0]
