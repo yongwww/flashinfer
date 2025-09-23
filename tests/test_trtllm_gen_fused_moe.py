@@ -2046,6 +2046,7 @@ def test_moe_quantization_classes(
     weight_processing,
     gated_act_type,
     cache_permute_indices,
+    use_dumped_data=None,  # Path to dumped data directory/request (e.g., "./dumps/request_000")
 ):
     """
     Test MoE implementations using separated quantization workflow.
@@ -2086,10 +2087,124 @@ def test_moe_quantization_classes(
 
     moe_impl._cache_permute_indices = cache_permute_indices
 
-    seed = 0
-    torch.random.manual_seed(seed)
+    # Check if we should use dumped data
+    if use_dumped_data is not None:
+        print(f"\n📂 Loading dumped data from: {use_dumped_data}")
+        from pathlib import Path
+        import json
+        
+        # Parse the path - could be directory or directory/request_XXX
+        dump_path = Path(use_dumped_data)
+        if dump_path.name.startswith("request_"):
+            request_dir = dump_path
+        else:
+            # Assume request_000 if just directory provided
+            request_dir = dump_path / "request_000"
+        
+        if not request_dir.exists():
+            raise FileNotFoundError(f"Dumped data not found at {request_dir}")
+        
+        # Load scalar parameters
+        with open(request_dir / "scalar.json", "r") as f:
+            dumped_scalars = json.load(f)
+        
+        # Load tensors
+        expert_logits = torch.load(request_dir / "routing_logits.pt", map_location="cuda")
+        routing_bias_path = request_dir / "routing_bias.pt"
+        routing_bias = torch.load(routing_bias_path, map_location="cuda") if routing_bias_path.exists() else None
+        hidden_states_fp8 = torch.load(request_dir / "hidden_states.pt", map_location="cuda")
+        hidden_states_scale = torch.load(request_dir / "hidden_states_scale.pt", map_location="cuda")
+        gemm1_weights_fp8 = torch.load(request_dir / "gemm1_weights.pt", map_location="cuda")
+        gemm1_weights_scale = torch.load(request_dir / "gemm1_weights_scale.pt", map_location="cuda")
+        gemm2_weights_fp8 = torch.load(request_dir / "gemm2_weights.pt", map_location="cuda")
+        gemm2_weights_scale = torch.load(request_dir / "gemm2_weights_scale.pt", map_location="cuda")
+        
+        # Update dimensions and configs from dumped data
+        num_tokens = expert_logits.shape[0]
+        num_experts = dumped_scalars["num_experts"]
+        hidden_size = hidden_states_fp8.shape[1]
+        intermediate_size = dumped_scalars["intermediate_size"]
+        
+        # Override routing config with dumped values
+        routing_config["num_experts"] = dumped_scalars["num_experts"]
+        routing_config["top_k"] = dumped_scalars["top_k"]
+        routing_config["n_groups"] = dumped_scalars["n_group"]
+        routing_config["top_k_groups"] = dumped_scalars["topk_group"]
+        routing_config["routed_scaling"] = dumped_scalars["routed_scaling_factor"]
+        routing_config["has_routing_bias"] = routing_bias is not None
+        
+        # Override weight processing with dumped values  
+        weight_processing["use_shuffled_weight"] = dumped_scalars["use_shuffled_weight"]
+        weight_processing["layout"] = WeightLayout.MajorK if dumped_scalars["weight_layout"] == 0 else WeightLayout.MajorN
+        
+        # Convert FP8 to BF16 for compatibility with existing test (will be re-quantized)
+        hidden_states = hidden_states_fp8.to(torch.bfloat16)
+        gemm1_weights = gemm1_weights_fp8.to(torch.bfloat16) 
+        gemm2_weights = gemm2_weights_fp8.to(torch.bfloat16)
+        
+        print(f"  Loaded data: tokens={num_tokens}, experts={num_experts}, hidden={hidden_size}, intermediate={intermediate_size}")
+        print(f"  Routing: top_k={routing_config['top_k']}, has_bias={routing_config['has_routing_bias']}")
+        print(f"  Weights: shuffled={weight_processing['use_shuffled_weight']}, layout={weight_processing['layout'].name}")
+    else:
+        seed = 0
+        torch.random.manual_seed(seed)
 
-    # Extract routing configuration
+        # Extract routing configuration
+        top_k = routing_config["top_k"]
+        padding = routing_config["padding"]
+        n_groups = routing_config["n_groups"]
+        top_k_groups = routing_config["top_k_groups"]
+        routed_scaling = routing_config["routed_scaling"]
+        num_experts = routing_config["num_experts"]
+        routing_method_type = routing_config["routing_method_type"]
+        tile_tokens_dim = calculate_tile_tokens_dim(num_tokens, num_experts, top_k)
+
+        # Validation checks
+        assert top_k <= num_experts
+        assert top_k <= 8
+        if (top_k_groups is not None) and (n_groups is not None) and (n_groups > 0):
+            assert top_k_groups <= 4
+            assert num_experts > n_groups
+            assert num_experts % n_groups == 0
+            assert num_experts % 4 == 0
+            assert top_k < (top_k_groups * num_experts / n_groups)
+
+        # Create test data based on routing method and quantization mode
+        # Different kernels have different dtype requirements for routing logits
+        if routing_method_type == RoutingMethodType.DeepSeekV3:
+            # DeepSeekV3 uses float for routing logits
+            expert_logits = torch.randn((num_tokens, num_experts), device="cuda").to(
+                torch.float
+            )
+        else:
+            # Other routing methods (Renormalize, RenormalizeNaive, Llama4) use bfloat16
+            expert_logits = torch.randn((num_tokens, num_experts), device="cuda").to(
+                torch.bfloat16
+            )
+
+        if routing_config["has_routing_bias"]:
+            routing_bias = torch.randn(num_experts, device="cuda", dtype=torch.bfloat16)
+        else:
+            routing_bias = None
+
+        hidden_states = 2 * torch.randn(
+            (num_tokens, hidden_size), device="cuda", dtype=torch.bfloat16
+        )
+        # hidden_states = torch.full(
+        #     (num_tokens, hidden_size), 1e-4, device="cuda", dtype=torch.bfloat16
+        # )
+        gemm1_weights = torch.randn(
+            (num_experts, 2 * intermediate_size, hidden_size),
+            device="cuda",
+            dtype=torch.bfloat16,
+        )
+        gemm2_weights = torch.randn(
+            (num_experts, hidden_size, intermediate_size),
+            device="cuda",
+            dtype=torch.bfloat16,
+        )
+    
+    # Re-extract config values (may have been updated from dumped data)
     top_k = routing_config["top_k"]
     padding = routing_config["padding"]
     n_groups = routing_config["n_groups"]
@@ -2098,51 +2213,6 @@ def test_moe_quantization_classes(
     num_experts = routing_config["num_experts"]
     routing_method_type = routing_config["routing_method_type"]
     tile_tokens_dim = calculate_tile_tokens_dim(num_tokens, num_experts, top_k)
-
-    # Validation checks
-    assert top_k <= num_experts
-    assert top_k <= 8
-    if (top_k_groups is not None) and (n_groups is not None) and (n_groups > 0):
-        assert top_k_groups <= 4
-        assert num_experts > n_groups
-        assert num_experts % n_groups == 0
-        assert num_experts % 4 == 0
-        assert top_k < (top_k_groups * num_experts / n_groups)
-
-    # Create test data based on routing method and quantization mode
-    # Different kernels have different dtype requirements for routing logits
-    if routing_method_type == RoutingMethodType.DeepSeekV3:
-        # DeepSeekV3 uses float for routing logits
-        expert_logits = torch.randn((num_tokens, num_experts), device="cuda").to(
-            torch.float
-        )
-    else:
-        # Other routing methods (Renormalize, RenormalizeNaive, Llama4) use bfloat16
-        expert_logits = torch.randn((num_tokens, num_experts), device="cuda").to(
-            torch.bfloat16
-        )
-
-    if routing_config["has_routing_bias"]:
-        routing_bias = torch.randn(num_experts, device="cuda", dtype=torch.bfloat16)
-    else:
-        routing_bias = None
-
-    hidden_states = 2 * torch.randn(
-        (num_tokens, hidden_size), device="cuda", dtype=torch.bfloat16
-    )
-    # hidden_states = torch.full(
-    #     (num_tokens, hidden_size), 1e-4, device="cuda", dtype=torch.bfloat16
-    # )
-    gemm1_weights = torch.randn(
-        (num_experts, 2 * intermediate_size, hidden_size),
-        device="cuda",
-        dtype=torch.bfloat16,
-    )
-    gemm2_weights = torch.randn(
-        (num_experts, hidden_size, intermediate_size),
-        device="cuda",
-        dtype=torch.bfloat16,
-    )
 
     # Generate routing info
     use_routing_scales_on_input = routing_method_type == RoutingMethodType.Llama4
@@ -2438,7 +2508,22 @@ def test_moe_quantization_classes(
 
 
 if __name__ == "__main__":
-    # pytest.main([__file__, "-v"])
+    import sys
+    
+    # Check if user wants to use dumped data
+    use_dumps = None
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--help":
+            print("Usage:")
+            print("  python test_trtllm_gen_fused_moe.py                   # Use random data")
+            print("  python test_trtllm_gen_fused_moe.py ./dumps           # Use dumped data from ./dumps/request_000")
+            print("  python test_trtllm_gen_fused_moe.py ./dumps/request_001  # Use specific dumped request")
+            sys.exit(0)
+        else:
+            use_dumps = sys.argv[1]
+            print(f"🔧 Using dumped data from: {use_dumps}")
+    
+    # Default config (will be overridden if using dumped data)
     routing_config = {
         "num_experts": 256,
         "top_k": 8,
@@ -2457,13 +2542,20 @@ if __name__ == "__main__":
         "layout": WeightLayout.MajorK,
         "compatible_moe_impls": [FP8BlockScaleMoe],
     }
+    
+    # These dimensions are ignored when using dumped data
+    num_tokens = 4 if use_dumps is None else 1  # Placeholder when using dumps
+    hidden_size = 1024 if use_dumps is None else 1
+    intermediate_size = 1024 if use_dumps is None else 1
+    
     test_moe_quantization_classes(
-        num_tokens=4,
-        hidden_size=1024,
-        intermediate_size=1024,
+        num_tokens=num_tokens,
+        hidden_size=hidden_size,
+        intermediate_size=intermediate_size,
         moe_impl=FP8BlockScaleMoe(),
         routing_config=routing_config,
         weight_processing=weight_processing,
         gated_act_type=GatedActType.SwiGlu,
         cache_permute_indices=cache_permute_indices,
+        use_dumped_data=use_dumps,  # Pass the dumped data path
     )
