@@ -71,7 +71,7 @@ __global__ void compute_sm120_cutlass_group_gemm_args(
     layout_SFA[i] = ScaleConfig::tile_atom_to_shape_SFA(cute::make_shape(m, n, k, 1));
     SFA_ptr[i] = SFA + int64_t(sf_m_offset) * int64_t(sf_k);
   } else {
-    layout_SFA[i] = ScaleConfig::tile_atom_to_shape_SFA(cute::make_shape(max_m, n, k, 1));
+    layout_SFA[i] = ScaleConfig::tile_atom_to_shape_SFA(cute::make_shape(m, n, k, 1));
     SFA_ptr[i] = SFA + int64_t(sf_m_offset);
   }
   layout_SFB[i] = ScaleConfig::tile_atom_to_shape_SFB(cute::make_shape(m, n, k, 1));

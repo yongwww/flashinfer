@@ -2763,21 +2763,77 @@ def group_gemm_fp8_nt_groupwise(
         assert out.dtype == out_dtype
 
     if is_sm120a_supported(a.device) or is_sm121a_supported(a.device):
-        # SM120/121 doesn't use mma_sm parameter
-        get_gemm_sm120_module().group_gemm_fp8_nt_groupwise.default(
-            int_workspace_buffer,
-            float_workspace_buffer,
-            a,
-            b,
-            a_scale,
-            b_scale,
-            out,
-            m_indptr,
-            n,
-            k,
-            *scale_granularity_mnk,
-            scale_major_mode,
-        )
+        # SM120/121 has issues with multi-group GEMM, only support single group
+        if num_groups > 1:
+            # For multi-group cases, fall back to loop-based approach
+            # This is slower but correct
+            import warnings
+
+            warnings.warn(
+                "SM120/121 multi-group GEMM is not fully supported. "
+                "Falling back to loop-based implementation which may be slower.",
+                RuntimeWarning,
+            )
+
+            # Process each group individually
+            for i in range(num_groups):
+                m_start = m_indptr[i].item()
+                m_end = m_indptr[i + 1].item()
+                group_m = m_end - m_start
+
+                # Extract group's inputs
+                a_group = a[m_start:m_end, :]
+                b_group = b[i : i + 1, :, :]
+
+                # Extract group's scales based on mode
+                if scale_major_mode == "K":
+                    a_scale_group = a_scale[m_start:m_end, :]
+                    b_scale_group = b_scale[i : i + 1, :, :]
+                else:  # MN mode
+                    # Calculate scale offsets
+                    sf_m_start = m_start // scale_granularity_mnk[0]
+                    sf_m_end = (
+                        m_end + scale_granularity_mnk[0] - 1
+                    ) // scale_granularity_mnk[0]
+                    a_scale_group = a_scale[:, sf_m_start:sf_m_end]
+                    b_scale_group = b_scale[i : i + 1, :, :]
+
+                # Create single-group m_indptr
+                group_m_indptr = torch.tensor(
+                    [0, group_m], dtype=torch.int32, device=a.device
+                )
+
+                # Call single-group GEMM
+                get_gemm_sm120_module().group_gemm_fp8_nt_groupwise.default(
+                    int_workspace_buffer,
+                    float_workspace_buffer,
+                    a_group,
+                    b_group,
+                    a_scale_group,
+                    b_scale_group,
+                    out[m_start:m_end, :],
+                    group_m_indptr,
+                    n,
+                    k,
+                    *scale_granularity_mnk,
+                    scale_major_mode,
+                )
+        else:
+            # Single group case - use the optimized kernel
+            get_gemm_sm120_module().group_gemm_fp8_nt_groupwise.default(
+                int_workspace_buffer,
+                float_workspace_buffer,
+                a,
+                b,
+                a_scale,
+                b_scale,
+                out,
+                m_indptr,
+                n,
+                k,
+                *scale_granularity_mnk,
+                scale_major_mode,
+            )
     elif is_sm100a_supported(a.device):
         get_gemm_sm100_module().group_gemm_fp8_nt_groupwise.default(
             int_workspace_buffer,
