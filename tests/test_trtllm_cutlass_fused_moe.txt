@@ -1,0 +1,13 @@
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe[128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_fp8[otype0-wtype0-128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_nvfp4[False-otype0-wtype0-128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_nvfp4[False-otype1-wtype1-128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_nvfp4[True-otype0-wtype0-128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_nvfp4[True-otype1-wtype1-128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_expert_parallel[128-2-8-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_tensor_parallel[128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_tensor_parallel[128-4-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_tensor_expert_parallel[128-2-2-8-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_tensor_expert_parallel[128-4-2-8-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_fp8_block_scaling[128-2-2-128-1] PASSED
+tests/moe/test_trtllm_cutlass_fused_moe.py::test_moe_mxfp8_mxfp4[None-None-None-otype0-128-2-2-128-1] Fatal Python error: Segmentation fault
