@@ -548,9 +548,11 @@ MoeGemmRunner<T, WeightType, OutputType, ScaleBiasType>::getAmpereConfigs(int sm
   int const max_split_k = 1;
   int const grouped_gemm_flag = CutlassGemmConfig::GROUPED_GEMM;
   int const enable_hopper = CutlassGemmConfig::NONE;
-
+  int const fp8fp4_mixed_flag =
+      use_wfp4afp8 ? CutlassGemmConfig::FP8FP4_MIXED : CutlassGemmConfig::NONE;
   auto config_type_param = static_cast<CutlassGemmConfig::CandidateConfigTypeParam>(
-      weight_only_flag | simt_only_flag | grouped_gemm_flag | enable_hopper | fp8_only_flag);
+      weight_only_flag | simt_only_flag | grouped_gemm_flag | enable_hopper | fp8_only_flag |
+      fp8fp4_mixed_flag);
 
   if (!kernels::cutlass_kernels::isValidAmpereMOESpecialisation<T, WeightType>() ||
       (use_w4afp8 && sm != 89) || use_wfp4a16) {
@@ -711,125 +713,125 @@ void MoeGemmRunner<T, WeightType, OutputType, ScaleBiasType>::dispatchToArch(
     TLLM_THROW("FP4 data type is not supported on SM < 90");
 #endif
   } else if (sm_ >= 90) {
-    // For SM120+ FP8 MoE, redirect to SM89 (Ada) FP8 kernel implementations.
-    if constexpr (use_fp8) {
+    // For SM120+ pure FP8 MoE (not FP8 x FP4), redirect to SM89 (Ada) FP8 kernel implementations.
+    if constexpr (use_fp8 && !use_wfp4afp8)
       if (sm_ >= 120) {
         dispatchMoeGemmToCutlass<T, WeightType, ScaleBiasType, cutlass::arch::Sm89, EpilogueTag>(
             inputs, multi_processor_count_);
         return;
       }
-    }
+  }
 
-    if constexpr (kernels::cutlass_kernels::isValidTmaWarpSpecializedMOESpecialisation<
-                      T, WeightType, EpilogueTag>() &&
-                  !use_w4_groupwise) {
-      // We allow both tma warp specialized and SM80 configurations to coexist because for some
-      // cases with small numbers of tokens SM80 is faster. We check here to see which is selected
-      if (inputs.gemm_config.sm_version >= 90) {
-        bool is_same_sm = inputs.gemm_config.sm_version == sm_;
-        // gemm_config.sm_version indicates the kernel pipeline, which is always 100 for 100, 103,
-        // 110 below logging helps confirming the cutlass pipeline matches the device major version
-        bool is_sm110 = inputs.gemm_config.sm_version == 100 && sm_ == 110;
-        bool is_sm103 = inputs.gemm_config.sm_version == 100 && sm_ == 103;
-        // SM120 and SM121 are architecturally identical
-        bool is_sm120 = (inputs.gemm_config.sm_version == 120) && (sm_ == 120 || sm_ == 121);
-        TLLM_CHECK_WITH_INFO(is_same_sm || is_sm110 || is_sm103 || is_sm120,
-                             "Using SM %d configuration for SM %d device",
-                             inputs.gemm_config.sm_version, sm_);
-        TLLM_CHECK_WITH_INFO(inputs.biases != nullptr || hopper_inputs.ptr_c == nullptr,
-                             "Input biases and hopper input disagree if bias is enabled");
-        TLLM_CHECK_WITH_INFO(
-            hopper_inputs.isValid(),
-            "Calling TMA warp specialized configuration with invalid hopper config");
+  if constexpr (kernels::cutlass_kernels::isValidTmaWarpSpecializedMOESpecialisation<
+                    T, WeightType, EpilogueTag>() &&
+                !use_w4_groupwise) {
+    // We allow both tma warp specialized and SM80 configurations to coexist because for some
+    // cases with small numbers of tokens SM80 is faster. We check here to see which is selected
+    if (inputs.gemm_config.sm_version >= 90) {
+      bool is_same_sm = inputs.gemm_config.sm_version == sm_;
+      // gemm_config.sm_version indicates the kernel pipeline, which is always 100 for 100, 103,
+      // 110 below logging helps confirming the cutlass pipeline matches the device major version
+      bool is_sm110 = inputs.gemm_config.sm_version == 100 && sm_ == 110;
+      bool is_sm103 = inputs.gemm_config.sm_version == 100 && sm_ == 103;
+      // SM120 and SM121 are architecturally identical
+      bool is_sm120 = (inputs.gemm_config.sm_version == 120) && (sm_ == 120 || sm_ == 121);
+      TLLM_CHECK_WITH_INFO(is_same_sm || is_sm110 || is_sm103 || is_sm120,
+                           "Using SM %d configuration for SM %d device",
+                           inputs.gemm_config.sm_version, sm_);
+      TLLM_CHECK_WITH_INFO(inputs.biases != nullptr || hopper_inputs.ptr_c == nullptr,
+                           "Input biases and hopper input disagree if bias is enabled");
+      TLLM_CHECK_WITH_INFO(hopper_inputs.isValid(),
+                           "Calling TMA warp specialized configuration with invalid hopper config");
 
-        // Select the appropriate fusion function
-        auto select_function = [&]() {
-          switch (hopper_inputs.fusion) {
-            case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::FINALIZE:
-              return &dispatchMoeGemmSelectTileShapeTmaWarpSpecialized<
-                  T, WeightType, OutputType, EpilogueTag,
-                  TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::FINALIZE>;
-            case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::NONE:
-              return &dispatchMoeGemmSelectTileShapeTmaWarpSpecialized<
-                  T, WeightType, OutputType, EpilogueTag,
-                  TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::NONE>;
-            case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::ACTIVATION:
-            case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::GATED_ACTIVATION:
-            default:
-              TLLM_THROW("Unimplemented fusion %d requested", (int)hopper_inputs.fusion);
-          };
+      // Select the appropriate fusion function
+      auto select_function = [&]() {
+        switch (hopper_inputs.fusion) {
+          case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::FINALIZE:
+            return &dispatchMoeGemmSelectTileShapeTmaWarpSpecialized<
+                T, WeightType, OutputType, EpilogueTag,
+                TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::FINALIZE>;
+          case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::NONE:
+            return &dispatchMoeGemmSelectTileShapeTmaWarpSpecialized<
+                T, WeightType, OutputType, EpilogueTag,
+                TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::NONE>;
+          case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::ACTIVATION:
+          case TmaWarpSpecializedGroupedGemmInput::EpilogueFusion::GATED_ACTIVATION:
+          default:
+            TLLM_THROW("Unimplemented fusion %d requested", (int)hopper_inputs.fusion);
         };
-        auto selected_func = select_function();
-        selected_func(hopper_inputs, inputs.num_experts, inputs.gemm_config, multi_processor_count_,
-                      inputs.stream, inputs.occupancy, nullptr);
-        return;
-      }
-
-      // Fallthrough to SM80 impl below
-    }
-
-#if defined(ENABLE_FP8)
-    // Hopper finegrained INT4 WS grouped GEMM
-    if constexpr (use_w4afp8) {
-      TLLM_CHECK_WITH_INFO(inputs.gemm_config.is_tma_warp_specialized,
-                           "w4afp8 is only supported for TMA warp specialization");
-      // EpilogueTag is ignored
-      if (inputs.k % 512 == 0) {
-        sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
-                                                      cutlass_extensions::EpilogueOpDefault, 4>(
-            inputs, hopper_inputs, multi_processor_count_, nullptr);
-      } else if (inputs.k % 256 == 0) {
-        sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
-                                                      cutlass_extensions::EpilogueOpDefault, 2>(
-            inputs, hopper_inputs, multi_processor_count_, nullptr);
-      } else if (inputs.k % 128 == 0) {
-        sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
-                                                      cutlass_extensions::EpilogueOpDefault, 1>(
-            inputs, hopper_inputs, multi_processor_count_, nullptr);
-      } else {
-        TLLM_THROW("Invalid GEMM K size %d", (int)inputs.k);
-      }
+      };
+      auto selected_func = select_function();
+      selected_func(hopper_inputs, inputs.num_experts, inputs.gemm_config, multi_processor_count_,
+                    inputs.stream, inputs.occupancy, nullptr);
       return;
     }
 
-    if constexpr (use_wfp4a16) {
-      TLLM_CHECK_WITH_INFO(inputs.gemm_config.is_tma_warp_specialized,
-                           "wfp4a16 is only supported for TMA warp specialization");
-      // EpilogueTag is ignored
+    // Fallthrough to SM80 impl below
+  }
+
+#if defined(ENABLE_FP8)
+  // Hopper finegrained INT4 WS grouped GEMM
+  if constexpr (use_w4afp8) {
+    TLLM_CHECK_WITH_INFO(inputs.gemm_config.is_tma_warp_specialized,
+                         "w4afp8 is only supported for TMA warp specialization");
+    // EpilogueTag is ignored
+    if (inputs.k % 512 == 0) {
+      sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
+                                                    cutlass_extensions::EpilogueOpDefault, 4>(
+          inputs, hopper_inputs, multi_processor_count_, nullptr);
+    } else if (inputs.k % 256 == 0) {
+      sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
+                                                    cutlass_extensions::EpilogueOpDefault, 2>(
+          inputs, hopper_inputs, multi_processor_count_, nullptr);
+    } else if (inputs.k % 128 == 0) {
       sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
                                                     cutlass_extensions::EpilogueOpDefault, 1>(
           inputs, hopper_inputs, multi_processor_count_, nullptr);
-      return;
+    } else {
+      TLLM_THROW("Invalid GEMM K size %d", (int)inputs.k);
     }
+    return;
+  }
+
+  if constexpr (use_wfp4a16) {
+    TLLM_CHECK_WITH_INFO(inputs.gemm_config.is_tma_warp_specialized,
+                         "wfp4a16 is only supported for TMA warp specialization");
+    // EpilogueTag is ignored
+    sm90_dispatch_moe_mixed_dtype_gemm_to_cutlass<T, WeightType, ScaleBiasType,
+                                                  cutlass_extensions::EpilogueOpDefault, 1>(
+        inputs, hopper_inputs, multi_processor_count_, nullptr);
+    return;
+  }
 #endif
 
-    // Do Ampere case instead
-    if constexpr (kernels::cutlass_kernels::isValidAmpereMOESpecialisation<T, WeightType,
-                                                                           EpilogueTag>()) {
-      TLLM_CHECK_WITH_INFO(!use_fp8, "No fallback FP8 implementation available");
-      TLLM_CHECK_WITH_INFO(use_w4afp8 || !hopper_inputs.isValid(),
-                           "Non-specialized Hopper implementation is being rerouted to fallback "
-                           "implementation so input "
-                           "information is not required");
-      TLLM_CHECK_WITH_INFO(
-          !inputs.gemm_config.is_tma_warp_specialized,
-          "GEMM config is for SM90 configuration, but this configuration is not valid for Hppper");
-      TLLM_CHECK_WITH_INFO(inputs.gemm_config.sm_version == 80,
-                           "Using SM %d configuration for SM80 fallback implementation",
-                           inputs.gemm_config.sm_version);
-      if constexpr (use_fp8) {
-        dispatchMoeGemmToCutlass<T, WeightType, ScaleBiasType, cutlass::arch::Sm89, EpilogueTag>(
-            inputs, multi_processor_count_);
-      } else {
-        dispatchMoeGemmToCutlass<T, WeightType, ScaleBiasType, cutlass::arch::Sm80, EpilogueTag>(
-            inputs, multi_processor_count_);
-      }
+  // Do Ampere case instead
+  if constexpr (kernels::cutlass_kernels::isValidAmpereMOESpecialisation<T, WeightType,
+                                                                         EpilogueTag>()) {
+    TLLM_CHECK_WITH_INFO(!use_fp8, "No fallback FP8 implementation available");
+    TLLM_CHECK_WITH_INFO(use_w4afp8 || !hopper_inputs.isValid(),
+                         "Non-specialized Hopper implementation is being rerouted to fallback "
+                         "implementation so input "
+                         "information is not required");
+    TLLM_CHECK_WITH_INFO(
+        !inputs.gemm_config.is_tma_warp_specialized,
+        "GEMM config is for SM90 configuration, but this configuration is not valid for Hppper");
+    TLLM_CHECK_WITH_INFO(inputs.gemm_config.sm_version == 80,
+                         "Using SM %d configuration for SM80 fallback implementation",
+                         inputs.gemm_config.sm_version);
+    if constexpr (use_fp8) {
+      dispatchMoeGemmToCutlass<T, WeightType, ScaleBiasType, cutlass::arch::Sm89, EpilogueTag>(
+          inputs, multi_processor_count_);
     } else {
-      TLLM_THROW("Configuration expects SM80 but configuration is not supported by SM80 kernels");
+      dispatchMoeGemmToCutlass<T, WeightType, ScaleBiasType, cutlass::arch::Sm80, EpilogueTag>(
+          inputs, multi_processor_count_);
     }
   } else {
-    TLLM_THROW("Arch unsupported for MoE GEMM");
+    TLLM_THROW("Configuration expects SM80 but configuration is not supported by SM80 kernels");
   }
+}
+else {
+  TLLM_THROW("Arch unsupported for MoE GEMM");
+}
 }
 
 template <typename T, typename WeightType, typename OutputType, typename ScaleBiasType>
