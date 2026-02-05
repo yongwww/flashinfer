@@ -1,0 +1,125 @@
+name: Test Check Run Update
+
+on:
+  workflow_dispatch:
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  # Job 1: This job will "fail" (we simulate a cancelled scenario)
+  spot-simulation:
+    name: Simulated Spot Job
+    runs-on: ubuntu-latest
+    outputs:
+      check_run_id: ${{ steps.get-id.outputs.check_run_id }}
+    steps:
+      - name: Get this job's check run ID
+        id: get-id
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Wait a moment for the check run to be created
+          sleep 5
+          
+          # List check runs for this commit and find this job's check run
+          CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs)
+          
+          echo "All check runs:"
+          echo "$CHECK_RUNS" | jq '.check_runs[] | {id, name, status, conclusion}'
+          
+          # Find this job's check run ID
+          CHECK_RUN_ID=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name == "Simulated Spot Job") | .id')
+          echo "This job's check run ID: $CHECK_RUN_ID"
+          echo "check_run_id=$CHECK_RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Simulate some work
+        run: |
+          echo "Doing some work..."
+          sleep 2
+
+      - name: Fail intentionally (simulating spot termination)
+        run: |
+          echo "Simulating spot termination failure"
+          exit 1
+
+  # Job 2: Try to update the failed job's check run
+  update-check-run:
+    name: Update Failed Check Run
+    runs-on: ubuntu-latest
+    needs: spot-simulation
+    if: always()  # Run even if spot-simulation fails
+    steps:
+      - name: Debug info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Previous job check run ID: ${{ needs.spot-simulation.outputs.check_run_id }}"
+          echo "SHA: ${{ github.sha }}"
+          
+          # List all check runs
+          echo "All check runs for this commit:"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs | jq '.check_runs[] | {id, name, status, conclusion}'
+
+      - name: Attempt to update the failed check run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Find the failed job's check run
+          CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs)
+          
+          FAILED_CHECK_ID=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name == "Simulated Spot Job") | select(.conclusion == "failure" or .conclusion == "cancelled") | .id')
+          
+          if [ -z "$FAILED_CHECK_ID" ]; then
+            echo "No failed check run found to update"
+            exit 0
+          fi
+          
+          echo "Found failed check run ID: $FAILED_CHECK_ID"
+          echo "Attempting to update its conclusion to 'neutral'..."
+          
+          # Try to update the check run
+          RESPONSE=$(gh api -X PATCH repos/${{ github.repository }}/check-runs/$FAILED_CHECK_ID \
+            -f conclusion="neutral" \
+            -f status="completed" \
+            -F output[title]="Spot terminated - Rerun passed" \
+            -F output[summary]="This job was terminated due to spot instance reclamation. The rerun on on-demand instance passed." \
+            2>&1) || true
+          
+          echo "API Response:"
+          echo "$RESPONSE"
+          
+          # Verify the update
+          echo ""
+          echo "Checking if update was successful..."
+          UPDATED_CHECK=$(gh api repos/${{ github.repository }}/check-runs/$FAILED_CHECK_ID)
+          echo "Updated check run:"
+          echo "$UPDATED_CHECK" | jq '{id, name, status, conclusion}'
+          
+          UPDATED_CONCLUSION=$(echo "$UPDATED_CHECK" | jq -r '.conclusion')
+          if [ "$UPDATED_CONCLUSION" == "neutral" ]; then
+            echo "✅ SUCCESS: Check run was updated to 'neutral'"
+          else
+            echo "❌ FAILED: Check run conclusion is still '$UPDATED_CONCLUSION'"
+            exit 1
+          fi
+
+  # Job 3: Final verification
+  verify-result:
+    name: Verify Final State
+    runs-on: ubuntu-latest
+    needs: [spot-simulation, update-check-run]
+    if: always()
+    steps:
+      - name: List final check run states
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Final state of all check runs:"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs | jq '.check_runs[] | {id, name, status, conclusion}'
+          
+          echo ""
+          echo "Summary:"
+          echo "If 'Simulated Spot Job' shows conclusion: 'neutral', the test PASSED"
+          echo "If it still shows 'failure', the API update did not work"
