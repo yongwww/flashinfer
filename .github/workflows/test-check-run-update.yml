@@ -1,33 +1,134 @@
-name: Test Check Run Update (GitHub App)
+name: Test Workflow Dispatch Architecture
+
+# This workflow tests the proposed architecture:
+# 1. PR Gateway creates check runs using GitHub App
+# 2. PR Gateway triggers Test Runner via workflow_dispatch
+# 3. Test Runner's jobs do NOT appear on PR
+# 4. Test Runner updates check runs created by PR Gateway
 
 on:
   workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Which workflow to run'
+        required: true
+        default: 'gateway'
+        type: choice
+        options:
+          - gateway
+          - runner
+      # Inputs for runner mode (passed from gateway)
+      sha:
+        description: 'Commit SHA (for runner mode)'
+        required: false
+        type: string
+      check_run_id:
+        description: 'Check run ID to update (for runner mode)'
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
-  # Job 1: This job will "fail" (we simulate a cancelled scenario)
-  spot-simulation:
-    name: Simulated Spot Job
+  # ============================================================================
+  # GATEWAY MODE: Simulates pr-test.yml behavior
+  # ============================================================================
+  gateway:
+    name: PR Gateway (creates check runs, triggers runner)
+    if: inputs.test_mode == 'gateway'
     runs-on: ubuntu-latest
     steps:
-      - name: Simulate some work
-        run: |
-          echo "Doing some work..."
-          sleep 2
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.TEST_APP_ID }}
+          private-key: ${{ secrets.TEST_APP_PRIVATE_KEY }}
 
-      - name: Fail intentionally (simulating spot termination)
+      - name: Create Check Run using GitHub App
+        id: create-check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          echo "Simulating spot termination failure"
+          echo "Creating check run 'CI: GPU Tests (Test)' on SHA ${{ github.sha }}..."
+          
+          RESPONSE=$(gh api repos/${{ github.repository }}/check-runs \
+            -f name="CI: GPU Tests (Test)" \
+            -f head_sha="${{ github.sha }}" \
+            -f status="in_progress" \
+            -f output='{"title":"Running tests...","summary":"Tests are in progress on spot instance."}')
+          
+          CHECK_RUN_ID=$(echo "$RESPONSE" | jq -r '.id')
+          echo "Created check run with ID: $CHECK_RUN_ID"
+          echo "check_run_id=$CHECK_RUN_ID" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "Current check runs on this commit:"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs | jq '.check_runs[] | {id, name, status, conclusion}'
+
+      - name: Trigger Test Runner workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Triggering test-runner workflow via workflow_dispatch..."
+          echo "Passing: sha=${{ github.sha }}, check_run_id=${{ steps.create-check.outputs.check_run_id }}"
+          
+          gh workflow run test-check-run-update.yml \
+            --repo ${{ github.repository }} \
+            --ref ${{ github.ref }} \
+            -f test_mode=runner \
+            -f sha=${{ github.sha }} \
+            -f check_run_id=${{ steps.create-check.outputs.check_run_id }}
+          
+          echo ""
+          echo "✅ Test Runner workflow triggered!"
+          echo ""
+          echo "=============================================="
+          echo "GATEWAY COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "What to observe:"
+          echo "1. This job (PR Gateway) should show ✅ on PR"
+          echo "2. Check run 'CI: GPU Tests (Test)' shows 🔄 in_progress"
+          echo "3. A new workflow run will start (Test Runner)"
+          echo "4. Test Runner's jobs should NOT appear on this PR/commit"
+          echo "5. After Test Runner completes, check run should be ✅"
+          echo ""
+          echo "Waiting 60 seconds for Test Runner to complete..."
+          sleep 60
+          
+          echo ""
+          echo "Final check runs state:"
+          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+            --jq '.check_runs[] | {id, name, status, conclusion}'
+
+  # ============================================================================
+  # RUNNER MODE: Simulates test-runner.yml behavior
+  # ============================================================================
+  runner-spot-simulation:
+    name: Simulated Spot Job (will fail)
+    if: inputs.test_mode == 'runner'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Simulate running tests
+        run: |
+          echo "Running tests on spot instance..."
+          echo "SHA: ${{ inputs.sha }}"
+          echo "Check Run ID to update: ${{ inputs.check_run_id }}"
+          sleep 5
+
+      - name: Simulate spot termination
+        run: |
+          echo "Simulating spot instance termination..."
           exit 1
 
-  # Job 2: Try to update the failed job's check run using GitHub App
-  update-check-run:
-    name: Update Failed Check Run (GitHub App)
+  runner-rerun:
+    name: Simulated Rerun (will succeed and update check)
+    if: inputs.test_mode == 'runner' && always()
+    needs: runner-spot-simulation
     runs-on: ubuntu-latest
-    needs: spot-simulation
-    if: always()
     steps:
       - name: Generate GitHub App Token
         id: app-token
@@ -36,102 +137,37 @@ jobs:
           app-id: ${{ secrets.TEST_APP_ID }}
           private-key: ${{ secrets.TEST_APP_PRIVATE_KEY }}
 
-      - name: List check runs before update
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+      - name: Simulate running tests on on-demand
         run: |
-          echo "=== BEFORE UPDATE ==="
-          echo "All check runs for this commit:"
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs | jq '.check_runs[] | {id, name, status, conclusion}'
+          echo "Running tests on on-demand instance..."
+          echo "SHA: ${{ inputs.sha }}"
+          echo "Check Run ID to update: ${{ inputs.check_run_id }}"
+          sleep 3
+          echo "Tests passed!"
 
-      - name: Update failed check run using GitHub App token
+      - name: Update Check Run to Success
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # Find the failed job's check run
-          CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs)
+          echo "Updating check run ${{ inputs.check_run_id }} to success..."
           
-          FAILED_CHECK_ID=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name == "Simulated Spot Job") | select(.conclusion == "failure" or .conclusion == "cancelled") | .id')
-          
-          if [ -z "$FAILED_CHECK_ID" ]; then
-            echo "No failed check run found to update"
-            exit 1
-          fi
-          
-          echo "Found failed check run ID: $FAILED_CHECK_ID"
-          echo "Attempting to update its conclusion to 'neutral' using GitHub App token..."
-          
-          # Update the check run using GitHub App token
-          gh api -X PATCH repos/${{ github.repository }}/check-runs/$FAILED_CHECK_ID \
-            -f conclusion="neutral" \
+          gh api -X PATCH repos/${{ github.repository }}/check-runs/${{ inputs.check_run_id }} \
             -f status="completed" \
-            -F output[title]="Spot terminated - Rerun passed" \
-            -F output[summary]="This job was terminated due to spot instance reclamation. The rerun on on-demand instance passed."
+            -f conclusion="success" \
+            -f output='{"title":"Tests Passed (rerun after spot termination)","summary":"Initial spot instance was terminated. Rerun on on-demand instance passed successfully."}'
           
           echo ""
-          echo "✅ API call completed successfully!"
-
-      - name: Verify update and wait for UI
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          echo "=== AFTER UPDATE ==="
-          
-          # Verify the update
-          CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs)
-          echo "All check runs after update:"
-          echo "$CHECK_RUNS" | jq '.check_runs[] | {id, name, status, conclusion}'
-          
-          # Check if update worked
-          UPDATED_CONCLUSION=$(echo "$CHECK_RUNS" | jq -r '.check_runs[] | select(.name == "Simulated Spot Job") | .conclusion')
-          
-          if [ "$UPDATED_CONCLUSION" == "neutral" ]; then
-            echo ""
-            echo "=============================================="
-            echo "✅ SUCCESS: Check run updated to 'neutral'"
-            echo "=============================================="
-            echo ""
-            echo "🔍 NOW CHECK THE PR/ACTIONS PAGE:"
-            echo "   The 'Simulated Spot Job' should show as ⚪ (neutral)"
-            echo "   instead of ❌ (failure)"
-            echo ""
-            echo "   Waiting 30 seconds for you to observe the UI..."
-            sleep 30
-          else
-            echo ""
-            echo "❌ FAILED: Check run conclusion is '$UPDATED_CONCLUSION'"
-            exit 1
-          fi
-
-  # Job 3: Final summary
-  verify-result:
-    name: Verify Final State
-    runs-on: ubuntu-latest
-    needs: [spot-simulation, update-check-run]
-    if: always()
-    steps:
-      - name: Generate GitHub App Token
-        id: app-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.TEST_APP_ID }}
-          private-key: ${{ secrets.TEST_APP_PRIVATE_KEY }}
-
-      - name: Final verification
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          echo "=== FINAL STATE ==="
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs | jq '.check_runs[] | {id, name, status, conclusion}'
-          
+          echo "✅ Check run updated to success!"
           echo ""
           echo "=============================================="
-          echo "TEST COMPLETE"
+          echo "TEST RUNNER COMPLETE"
           echo "=============================================="
           echo ""
-          echo "Expected results:"
-          echo "  - 'Simulated Spot Job': neutral (⚪)"
-          echo "  - 'Update Failed Check Run (GitHub App)': success (✅)"
-          echo "  - 'Verify Final State': success (✅)"
+          echo "Verification:"
+          echo "1. This workflow (Test Runner) has a ❌ failed job (Simulated Spot Job)"
+          echo "2. But this workflow should NOT appear on the original commit/PR"
+          echo "3. The check run 'CI: GPU Tests (Test)' should now show ✅"
           echo ""
-          echo "If 'Simulated Spot Job' shows 'neutral', the GitHub App approach WORKS!"
+          echo "Final check runs on commit ${{ inputs.sha }}:"
+          gh api repos/${{ github.repository }}/commits/${{ inputs.sha }}/check-runs \
+            --jq '.check_runs[] | {id, name, status, conclusion}'
