@@ -1,0 +1,75 @@
+name: Test PR Gateway
+
+# This workflow tests if workflow_dispatch jobs appear on PR status checks
+# Expected: Only this workflow's jobs + our App's check runs should appear on PR
+# Expected: The runner workflow's jobs should NOT appear on PR
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/test-pr-gateway.yml'
+      - '.github/workflows/test-pr-runner.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  gateway:
+    name: PR Gateway
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.TEST_APP_ID }}
+          private-key: ${{ secrets.TEST_APP_PRIVATE_KEY }}
+
+      - name: Create Check Run
+        id: create-check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          echo "Creating check run on PR head SHA: ${{ github.event.pull_request.head.sha }}"
+          
+          RESPONSE=$(gh api repos/${{ github.repository }}/check-runs \
+            -f name="CI: GPU Tests (PR Test)" \
+            -f head_sha="${{ github.event.pull_request.head.sha }}" \
+            -f status="in_progress" \
+            -F output[title]="Running tests..." \
+            -F output[summary]="Tests are running on spot instance.")
+          
+          CHECK_RUN_ID=$(echo "$RESPONSE" | jq -r '.id')
+          echo "Created check run ID: $CHECK_RUN_ID"
+          echo "check_run_id=$CHECK_RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Trigger Runner Workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Triggering test-pr-runner.yml workflow..."
+          
+          gh workflow run test-pr-runner.yml \
+            --repo ${{ github.repository }} \
+            --ref main \
+            -f pr_head_sha=${{ github.event.pull_request.head.sha }} \
+            -f check_run_id=${{ steps.create-check.outputs.check_run_id }} \
+            -f pr_number=${{ github.event.pull_request.number }}
+          
+          echo "✅ Runner workflow triggered!"
+          echo ""
+          echo "=============================================="
+          echo "PR GATEWAY COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "Now check the PR status checks panel."
+          echo "You should see:"
+          echo "  ✅ PR Gateway (this job)"
+          echo "  🔄 CI: GPU Tests (PR Test) - in progress"
+          echo ""
+          echo "You should NOT see:"
+          echo "  ❌ Jobs from test-pr-runner.yml"
+          echo ""
+          echo "The runner workflow will update the check run in ~30 seconds."

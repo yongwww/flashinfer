@@ -1,0 +1,86 @@
+name: Test PR Runner
+
+# This workflow simulates the test runner that runs actual tests
+# It is triggered via workflow_dispatch, so its jobs should NOT appear on the PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_head_sha:
+        description: 'PR head SHA'
+        required: true
+        type: string
+      check_run_id:
+        description: 'Check run ID to update'
+        required: true
+        type: string
+      pr_number:
+        description: 'PR number'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  spot-simulation:
+    name: Spot Test (will fail)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Simulate running tests
+        run: |
+          echo "Running tests on spot instance..."
+          echo "PR SHA: ${{ inputs.pr_head_sha }}"
+          echo "Check Run ID: ${{ inputs.check_run_id }}"
+          echo "PR Number: ${{ inputs.pr_number }}"
+          sleep 5
+
+      - name: Simulate spot termination
+        run: |
+          echo "💥 Spot instance terminated!"
+          exit 1
+
+  rerun-simulation:
+    name: Rerun Test (will pass)
+    runs-on: ubuntu-latest
+    needs: spot-simulation
+    if: always()
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.TEST_APP_ID }}
+          private-key: ${{ secrets.TEST_APP_PRIVATE_KEY }}
+
+      - name: Simulate running tests on on-demand
+        run: |
+          echo "Running tests on on-demand instance..."
+          sleep 3
+          echo "✅ Tests passed!"
+
+      - name: Update Check Run to Success
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          echo "Updating check run ${{ inputs.check_run_id }} to success..."
+          
+          gh api -X PATCH repos/${{ github.repository }}/check-runs/${{ inputs.check_run_id }} \
+            -f status="completed" \
+            -f conclusion="success" \
+            -F output[title]="Tests Passed" \
+            -F output[summary]="Tests passed successfully. (Spot instance was terminated, rerun on on-demand passed.)"
+          
+          echo ""
+          echo "✅ Check run updated to success!"
+          echo ""
+          echo "=============================================="
+          echo "RUNNER COMPLETE"
+          echo "=============================================="
+          echo ""
+          echo "This workflow has:"
+          echo "  ❌ Spot Test (will fail) - FAILED"
+          echo "  ✅ Rerun Test (will pass) - PASSED"
+          echo ""
+          echo "But these jobs should NOT appear on PR #${{ inputs.pr_number }}"
+          echo "Only 'CI: GPU Tests (PR Test)' check run should show ✅"
