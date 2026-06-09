@@ -1,0 +1,20 @@
+{
+  "name": "torch_fused_add_rmsnorm",
+  "definition": "fused_add_rmsnorm_h4096",
+  "author": "trace-apply-demo",
+  "spec": {
+    "language": "python",
+    "target_hardware": [
+      "NVIDIA B200"
+    ],
+    "entry_point": "main.py::run",
+    "destination_passing_style": false
+  },
+  "sources": [
+    {
+      "path": "main.py",
+      "content": "\nimport sys, math\nimport torch\n_P = False\ndef run(hidden_states, residual, weight, eps=1e-6):\n    global _P\n    if not _P:\n        _P = True\n        sys.stderr.write(\"[TRACE_APPLY_SOLUTION] fused_add_rmsnorm (value-returning) invoked\\n\"); sys.stderr.flush()\n    s = hidden_states.to(torch.float32) + residual.to(torch.float32)   # new residual (pre-norm sum)\n    var = s.pow(2).mean(dim=-1, keepdim=True)\n    out = (s * torch.rsqrt(var + eps)) * weight.to(torch.float32)       # normalized output\n    return out.to(hidden_states.dtype), s.to(residual.dtype)            # (output, residual)\n"
+    }
+  ],
+  "description": "Value-returning fused_add_rmsnorm; runtime writes outputs back in place."
+}

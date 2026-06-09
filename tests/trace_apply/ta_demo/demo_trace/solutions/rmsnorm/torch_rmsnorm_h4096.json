@@ -1,0 +1,19 @@
+{
+  "name": "torch_rmsnorm_h4096",
+  "definition": "rmsnorm_h4096",
+  "author": "trace-apply-demo",
+  "spec": {
+    "language": "python",
+    "target_hardware": [
+      "NVIDIA B200"
+    ],
+    "entry_point": "main.py::run"
+  },
+  "sources": [
+    {
+      "path": "main.py",
+      "content": "import sys\nimport torch\n\n_PRINTED = False\n\ndef run(hidden_states, weight, eps=1e-6, **kwargs):\n    global _PRINTED\n    if not _PRINTED:\n        _PRINTED = True\n        sys.stderr.write(\"[TRACE_APPLY_SOLUTION] torch_rmsnorm_h4096 invoked (trace solution running)\\n\")\n        sys.stderr.flush()\n    x = hidden_states.to(torch.float32)\n    inv_rms = torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + eps)\n    y = (x * inv_rms) * weight.to(torch.float32)\n    return y.to(hidden_states.dtype)\n"
+    }
+  ],
+  "description": "Reference-equivalent torch RMSNorm used to demonstrate Trace Apply dispatch."
+}

@@ -1,0 +1,19 @@
+{
+  "name": "torch_gqa_decode",
+  "definition": "gqa_paged_decode_h32_kv128_d128_ps8",
+  "author": "trace-apply-demo",
+  "spec": {
+    "language": "python",
+    "target_hardware": [
+      "NVIDIA B200"
+    ],
+    "entry_point": "main.py::run"
+  },
+  "sources": [
+    {
+      "path": "main.py",
+      "content": "\nimport sys, math\nimport torch\n_P = False\ndef run(q, k_cache, v_cache, kv_indptr, kv_indices, sm_scale=None, **kw):\n    global _P\n    if not _P:\n        _P = True\n        sys.stderr.write(\n            \"[TRACE_APPLY_SOLUTION] gqa_paged_decode invoked \"\n            f\"q={tuple(q.shape)}/{q.dtype} k={tuple(k_cache.shape)}/{k_cache.dtype} \"\n            f\"indptr={tuple(kv_indptr.shape)} indices={tuple(kv_indices.shape)} sm_scale={sm_scale}\\n\"\n        ); sys.stderr.flush()\n    nt, hq, d = q.shape\n    hkv = k_cache.shape[-2]\n    group = hq // hkv\n    scale = float(sm_scale) if sm_scale is not None else 1.0 / math.sqrt(d)\n    out = torch.empty_like(q)\n    for b in range(nt):  # batch_size==num query tokens (bs=1 decode -> nt=1)\n        s, e = int(kv_indptr[b].item()), int(kv_indptr[b + 1].item())\n        idx = kv_indices[s:e].long()\n        k = k_cache.index_select(0, idx).to(torch.float32)  # [S, hkv, d]\n        v = v_cache.index_select(0, idx).to(torch.float32)\n        qf = q[b].to(torch.float32)                         # [hq, d]\n        for h in range(hq):\n            kh = k[:, h // group, :]                        # [S, d]\n            vh = v[:, h // group, :]\n            p = torch.softmax((qf[h] @ kh.t()) * scale, dim=-1)\n            out[b, h] = (p @ vh).to(q.dtype)\n    return out\n"
+    }
+  ],
+  "description": "Reference GQA paged decode (bs=1) to demonstrate stateful plan/run Trace Apply."
+}

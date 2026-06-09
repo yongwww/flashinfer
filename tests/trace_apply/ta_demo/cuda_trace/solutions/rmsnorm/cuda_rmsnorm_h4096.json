@@ -1,0 +1,20 @@
+{
+  "name": "cuda_rmsnorm_h4096",
+  "definition": "rmsnorm_h4096",
+  "author": "trace-apply-demo",
+  "spec": {
+    "language": "cuda",
+    "target_hardware": [
+      "NVIDIA B200"
+    ],
+    "entry_point": "rmsnorm_cuda.cu::rmsnorm_cuda",
+    "destination_passing_style": true
+  },
+  "sources": [
+    {
+      "path": "rmsnorm_cuda.cu",
+      "content": "\n#include <cuda_fp16.h>\n#include <cuda_bf16.h>\n#include \"tvm_ffi_utils.h\"\nusing tvm::ffi::TensorView;\n\ntemplate <typename T>\n__global__ void _rmsnorm_kernel(const T* __restrict__ x, const T* __restrict__ w,\n                                T* __restrict__ out, int hidden, float eps) {\n  int row = blockIdx.x;\n  const T* xr = x + (long long)row * hidden;\n  T* outr = out + (long long)row * hidden;\n  float local = 0.f;\n  for (int i = threadIdx.x; i < hidden; i += blockDim.x) {\n    float v = static_cast<float>(xr[i]);\n    local += v * v;\n  }\n  for (int off = 16; off > 0; off >>= 1)\n    local += __shfl_down_sync(0xffffffffu, local, off);\n  __shared__ float ssum[32];\n  int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;\n  if (lane == 0) ssum[warp] = local;\n  __syncthreads();\n  if (threadIdx.x == 0) {\n    float total = 0.f;\n    int nwarps = (blockDim.x + 31) >> 5;\n    for (int i = 0; i < nwarps; ++i) total += ssum[i];\n    ssum[0] = rsqrtf(total / hidden + eps);\n  }\n  __syncthreads();\n  float rinv = ssum[0];\n  for (int i = threadIdx.x; i < hidden; i += blockDim.x) {\n    outr[i] = static_cast<T>((static_cast<float>(xr[i]) * rinv) * static_cast<float>(w[i]));\n  }\n}\n\nvoid rmsnorm_cuda(TensorView input, TensorView weight, TensorView output) {\n  int batch = input.size(0);\n  int hidden = input.size(1);\n  ffi::CUDADeviceGuard guard(input.device().device_id);\n  cudaStream_t stream = get_stream(input.device());\n  int threads = 256;\n  DISPATCH_DLPACK_DTYPE_TO_CTYPE_FP16(input.dtype(), c_type, [&] {\n    _rmsnorm_kernel<c_type><<<batch, threads, 0, stream>>>(\n        static_cast<const c_type*>(input.data_ptr()),\n        static_cast<const c_type*>(weight.data_ptr()),\n        static_cast<c_type*>(output.data_ptr()), hidden, 1e-6f);\n    return true;\n  });\n}\n\nTVM_FFI_DLL_EXPORT_TYPED_FUNC(rmsnorm_cuda, rmsnorm_cuda);\n"
+    }
+  ],
+  "description": "Hand-written CUDA RMSNorm (DPS) to demonstrate a C++/CUDA Trace Apply solution e2e."
+}
